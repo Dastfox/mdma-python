@@ -1,6 +1,6 @@
 """Golden-output test using the worked example from spec.md section 8."""
 
-from mdma import render
+from mdma import parse_file, render, render_template
 
 TEMPLATE = """\
 @inputs
@@ -112,3 +112,7 @@ def test_changelog_entry_is_array_of_two():
     assert len(entries) == 2
     assert entries[0] == "### 2.1.0 — 2026-06-01\n- Dark mode\n"
     assert entries[1] == "### 2.0.0 — 2026-05-01\n- Initial release\n"
+
+
+def test_render_template_on_pre_parsed_template_matches_render():
+    assert render_template(parse_file(TEMPLATE), INPUTS) == render(TEMPLATE, INPUTS)

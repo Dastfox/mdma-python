@@ -46,6 +46,16 @@ result["changelog-by-version"]
 # {"2.1.0": "### 2.1.0 — 2026-06-01\n", "2.0.0": "### 2.0.0 — 2026-05-01\n"}
 ```
 
+`render_template(template, inputs)` renders an already-parsed template (from
+`parse_file`) — same semantics as `render`, minus the parse:
+
+```python
+from mdma import parse_file, render_template
+
+template = parse_file(source)  # parse once ...
+render_template(template, {"project": "Acme SDK", "version": "3.0.0", "date": "2026-07-01"})  # ... render many times
+```
+
 `render_file(path, inputs)` reads `path` as UTF-8 and renders it — equivalent
 to `render(open(path).read(), inputs)`:
 
@@ -69,6 +79,24 @@ result = render_file("release-notes.mdma", {...})
 write_output(result, "out/")                        # every block
 write_output(result, "out/", block="release-notes")  # just that one
 ```
+
+`get_inputs(source)` returns the template's `@inputs` declarations, and
+`validate_inputs(source, inputs)` checks an inputs dict against them without
+rendering — returning the resolved inputs (defaults applied) or raising
+`MissingInputError` / `MdmaTypeError`:
+
+```python
+from mdma import get_inputs, validate_inputs
+
+get_inputs(source)
+# [InputDecl(name="project", type="string", has_default=False, default=None), ...]
+
+validate_inputs(source, {"project": "Acme SDK", "version": "3.0.0", "date": "2026-07-01"})
+# resolved inputs, with declared defaults applied
+```
+
+`parse_file(source)` is also exported for lower-level access to the parsed
+template (inputs and blocks).
 
 `render()` raises one of the exceptions in `mdma.errors` on failure:
 

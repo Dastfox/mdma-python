@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Union
 from .errors import DuplicateNameError, MdmaTypeError
 from .evaluator import Scope, evaluate
 from .file_parser import parse_file
+from .model import ParsedTemplate
 from .schema import validate_inputs
 from .template_ast import ExprNode, ForNode, IfNode, Node, TextNode
 from .util import format_number, to_display_string, truthy, typename
@@ -23,7 +24,14 @@ def render(source: str, inputs: Dict[str, Any] = None) -> Dict[str, RenderedValu
     `<multiple:>` block renders to a list of strings, or -- if it also
     declares `<name:>` -- to a dict keyed by each item's computed name.
     """
-    template = parse_file(source)
+    return render_template(parse_file(source), inputs)
+
+
+def render_template(template: ParsedTemplate, inputs: Dict[str, Any] = None) -> Dict[str, RenderedValue]:
+    """Render an already-parsed template (from `parse_file`) against an inputs object.
+
+    Same semantics as `render`, minus the parse -- parse once, render many times.
+    """
     resolved_inputs = validate_inputs(template.inputs, inputs or {})
     all_block_names = {block.name for block in template.blocks}
 
