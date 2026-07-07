@@ -31,6 +31,16 @@ _NAME_MOD_RE = re.compile(r"^name\s*:\s*(.+)$")
 _RESERVED = {"multiple"}
 _SCALAR_TYPES = {"string", "number", "boolean", "object"}
 
+# One or more {# ... #} comments (each closing on this line) at the end of a
+# structural line. The non-greedy body plus the trailing anchor means a
+# comment-looking span inside a quoted default value never matches: the
+# closing quote after '#}' keeps the anchor from landing.
+_TRAILING_COMMENT_RE = re.compile(r"[ \t]*(?:\{#.*?#\}[ \t]*)+$")
+
+
+def _is_comment_line(stripped_line: str) -> bool:
+    return stripped_line.startswith("{#") and bool(_TRAILING_COMMENT_RE.fullmatch(stripped_line))
+
 
 def _looks_like_block_header(stripped_line: str) -> bool:
     return bool(_SIMPLE_HEADER_RE.match(stripped_line) or _OPEN_HEADER_RE.match(stripped_line))
@@ -50,6 +60,15 @@ def parse_file(source: str) -> ParsedTemplate:
         stripped = lines[idx].strip()
         if stripped == "" or _looks_like_block_header(stripped):
             break
+        if _is_comment_line(stripped):
+            idx += 1
+            continue
+        if stripped.startswith("{#"):
+            raise MdmaSyntaxError(
+                f"Unclosed comment at line {idx + 1}: comments in the @inputs "
+                "section must close with '#}' on the same line"
+            )
+        stripped = _TRAILING_COMMENT_RE.sub("", stripped)
         decl = _parse_input_decl(stripped, idx + 1)
         if decl.name in _RESERVED:
             raise MdmaSyntaxError(
@@ -61,7 +80,9 @@ def parse_file(source: str) -> ParsedTemplate:
         inputs.append(decl)
         idx += 1
 
-    while idx < len(lines) and lines[idx].strip() == "":
+    while idx < len(lines) and (
+        lines[idx].strip() == "" or _is_comment_line(lines[idx].strip())
+    ):
         idx += 1
 
     input_types = {decl.name: decl.type for decl in inputs}
@@ -209,11 +230,18 @@ def _parse_open_header(
 
 
 def _strip_blank_edges(lines):
+    # Comment-only lines count as blank here: a comment line above or below a
+    # body's content (e.g. a separator between blocks) is file formatting too,
+    # and stripping it now keeps it from leaving a stray newline behind.
+    def _ignorable(line: str) -> bool:
+        stripped = line.strip()
+        return stripped == "" or _is_comment_line(stripped)
+
     start = 0
     end = len(lines)
-    while start < end and lines[start].strip() == "":
+    while start < end and _ignorable(lines[start]):
         start += 1
-    while end > start and lines[end - 1].strip() == "":
+    while end > start and _ignorable(lines[end - 1]):
         end -= 1
     return lines[start:end]
 

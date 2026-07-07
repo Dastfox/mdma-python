@@ -44,6 +44,14 @@ def test_release_notes_mdma_file(examples_dir):
     assert result["changelog-entry"][0] == "### 2.1.0 — 2026-06-01\n- Dark mode\n"
 
 
+def test_comments_mdma_file(examples_dir):
+    source = (examples_dir / "comments.mdma").read_text()
+    result = render(source, {"name": "Widget", "tags": ["ui", "core"]})
+    assert result["header"] == "## Widget"
+    assert result["tag-line"] == "Tags: ui, core"
+    assert render(source, {"name": "Widget"})["tag-line"] == ""
+
+
 def test_named_blocks_mdma_file(examples_dir):
     source = (examples_dir / "named-blocks.mdma").read_text()
     result = render(

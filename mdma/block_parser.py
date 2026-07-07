@@ -12,7 +12,7 @@ from .errors import MdmaSyntaxError
 from .expr_parser import parse_expression
 from .template_ast import ExprNode, ForNode, IfNode, Node, TextNode
 
-_TAG_SPAN_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}", re.DOTALL)
+_TAG_SPAN_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.DOTALL)
 
 _IF_RE = re.compile(r"^if\s+(.+)$", re.DOTALL)
 _ELIF_RE = re.compile(r"^elif\s+(.+)$", re.DOTALL)
@@ -24,7 +24,7 @@ _ENDFOR_RE = re.compile(r"^endfor$")
 
 @dataclass
 class _RawToken:
-    kind: str  # 'text' | 'expr' | 'tag'
+    kind: str  # 'text' | 'expr' | 'tag' | 'comment'
     content: str
     trim_left: bool = False
     trim_right: bool = False
@@ -48,18 +48,104 @@ def tokenize_body(body: str) -> List[_RawToken]:
         raw = m.group(0)
         inner = raw[2:-2]
         content, trim_left, trim_right = _split_delims(inner)
-        kind = "expr" if raw.startswith("{{") else "tag"
+        if raw.startswith("{{"):
+            kind = "expr"
+        elif raw.startswith("{%"):
+            kind = "tag"
+        else:
+            kind = "comment"
         tokens.append(_RawToken(kind, content, trim_left, trim_right))
         pos = m.end()
     if pos < len(body):
         tokens.append(_RawToken("text", body[pos:]))
+    for tok in tokens:
+        if tok.kind == "text" and "{#" in tok.content:
+            raise MdmaSyntaxError("Unclosed comment: missing '#}'")
     return tokens
+
+
+# A comment is "standalone" when nothing but whitespace shares its line; the
+# whole line then vanishes from the output, so authors can annotate templates
+# without leaving blank lines behind.
+# \Z, not $: $ would also match before a trailing newline, hiding the
+# newline-anchored match that proves the comment starts its own line.
+_STANDALONE_LEFT_RE = re.compile(r"(^|\n)[ \t]*\Z")
+_STANDALONE_RIGHT_RE = re.compile(r"^[ \t]*\n")
+_ONLY_INDENT_RE = re.compile(r"^[ \t]*\Z")
+
+
+def strip_comment_lines(tokens: List[_RawToken]) -> List[_RawToken]:
+    tokens = list(tokens)
+
+    # Decide standalone-ness on the untouched token stream first: removals
+    # mutate the very text tokens the line-position checks rely on.
+    plans = []  # (comment index, 'newline' | 'eof')
+    for i, tok in enumerate(tokens):
+        if tok.kind != "comment":
+            continue
+        if i > 0:
+            prev = tokens[i - 1]
+            if prev.kind != "text":
+                continue
+            m = _STANDALONE_LEFT_RE.search(prev.content)
+            # A match on '^' only proves line-start if the text token itself
+            # opens the body; otherwise another tag sits on the same line.
+            if not m or (m.group(1) == "" and i != 1):
+                continue
+        nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+        if nxt is None:
+            plans.append((i, "eof"))
+        elif nxt.kind == "text" and _STANDALONE_RIGHT_RE.match(nxt.content):
+            plans.append((i, "newline"))
+        elif nxt.kind == "text" and i + 2 == len(tokens) and _ONLY_INDENT_RE.match(nxt.content):
+            plans.append((i, "eof"))
+
+    for i, mode in plans:
+        if i > 0:
+            prev = tokens[i - 1]
+            # 'eof': the comment is the last line, so the line it vanishes
+            # with includes the newline that started it.
+            pattern = r"\n?[ \t]*$" if mode == "eof" else r"[ \t]*$"
+            tokens[i - 1] = _RawToken("text", re.sub(pattern, "", prev.content, count=1))
+        if i + 1 < len(tokens):
+            nxt = tokens[i + 1]
+            if mode == "newline":
+                content = _STANDALONE_RIGHT_RE.sub("", nxt.content, count=1)
+            else:
+                content = ""
+            tokens[i + 1] = _RawToken("text", content)
+    return tokens
+
+
+def drop_comments(tokens: List[_RawToken]) -> List[_RawToken]:
+    """Removes comment tokens, honoring their trim markers, and merges the
+    text tokens left adjacent so later whitespace control sees the same
+    stream it would have without the comment."""
+    result: List[_RawToken] = []
+    pending_trim = False
+    for tok in tokens:
+        if tok.kind == "comment":
+            if tok.trim_left and result and result[-1].kind == "text":
+                result[-1] = _RawToken("text", result[-1].content.rstrip())
+            pending_trim = pending_trim or tok.trim_right
+            continue
+        if tok.kind == "text":
+            content = tok.content.lstrip() if pending_trim else tok.content
+            pending_trim = False
+            if result and result[-1].kind == "text":
+                result[-1] = _RawToken("text", result[-1].content + content)
+            else:
+                result.append(_RawToken("text", content))
+            continue
+        pending_trim = False
+        result.append(tok)
+    return result
 
 
 def apply_whitespace_control(tokens: List[_RawToken]) -> List[_RawToken]:
     tokens = list(tokens)
     for i, tok in enumerate(tokens):
-        if tok.kind not in ("expr", "tag"):
+        if tok.kind == "text":
             continue
         if tok.trim_left and i > 0 and tokens[i - 1].kind == "text":
             tokens[i - 1] = _RawToken("text", tokens[i - 1].content.rstrip())
@@ -152,7 +238,8 @@ def _parse_for(tokens: List[_RawToken], i: int) -> Tuple[ForNode, int]:
 
 
 def parse_block_body(body: str) -> List[Node]:
-    tokens = apply_whitespace_control(tokenize_body(body))
+    tokens = drop_comments(strip_comment_lines(tokenize_body(body)))
+    tokens = apply_whitespace_control(tokens)
     nodes, end = parse_nodes(tokens, 0, ())
     if end != len(tokens):
         stray = tokens[end].content if tokens[end].kind == "tag" else tokens[end]

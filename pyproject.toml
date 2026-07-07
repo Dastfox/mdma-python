@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "python-mdma"
-version = "0.2.0"
+version = "0.3.0"
 description = "Typed Markdown templating: render one or more Markdown strings from an .mdma template and an inputs object."
 readme = "README.md"
 license = "MIT"

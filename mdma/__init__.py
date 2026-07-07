@@ -18,7 +18,7 @@ from .model import ParsedTemplate
 from .output import write_output
 from .renderer import render, render_file, render_template
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "render",
